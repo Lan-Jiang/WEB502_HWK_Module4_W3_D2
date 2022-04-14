@@ -5,16 +5,35 @@ const express               =  require('express'),
       bodyParser            =  require("body-parser"),
       LocalStrategy         =  require("passport-local"),
       passportLocalMongoose =  require("passport-local-mongoose"),
-      User                  =  require("./models/user")
+      User                  =  require("./models/user"),
+      mongoSanitize         =  require('express-mongo-sanitize'),
+      rateLimit             =  require('express-rate-limit'),
+      xss                   =  require('xss-clean'),
+      helmet                =  require('helmet')
 
 //Connecting database
 mongoose.connect("mongodb://localhost/auth_demo");
 
-const expSession = require("express-session") ({
-    secret:"mysecret",       //decode or encode session
-    resave: false,          
-    saveUninitialized:false    
-});
+// const expSession = require("express-session") ({
+//     secret:"mysecret",       //decode or encode session
+//     resave: false,          
+//     saveUninitialized:false    
+// });
+
+const expSession = require("express-session");
+app.use(
+  expSession({
+    secret: "mysecret", //decode or encode session
+    resave: false,
+    saveUninitialized: true, //
+    cookie: {
+        httpOnly: true,
+        secure: true,
+        maxAge: 1*60*1000 // 10 minutes
+    }
+  })
+);
+
 
 passport.serializeUser(User.serializeUser());       //session encoding
 passport.deserializeUser(User.deserializeUser());   //session decoding
@@ -25,15 +44,28 @@ app.use(bodyParser.urlencoded(
 ))
 app.use(passport.initialize());
 app.use(passport.session());
-app.use(expSession);
+// app.use(expSession);
 app.use(express.static("public"));
 
 
 //=======================
 //      O W A S P
 //=======================
+// Data sanitization against NoSQL Injection Attacks
+app.use(mongoSanitize());
 
-
+const limit = rateLimit( {
+    max:100,
+    windowMs: 60 * 60 * 1000,
+    message: 'Too many requests'
+});
+app.use('/routeName', limit);
+// Preventing DOS Attacks - Body Parser
+app.use(express.json({ limit: '10kb'})); //Body limit is 10
+// Data Sanitization against XSS attacks
+app.use(xss());
+// Helmet to secure connection and data
+app.use(helmet());
 
 //=======================
 //      R O U T E S
@@ -53,6 +85,7 @@ app.post("/login",passport.authenticate("local",{
     failureRedirect:"/login"
 }),function (req, res){
 });
+
 app.get("/register",(req,res)=>{
     res.render("register");
 });
@@ -68,7 +101,8 @@ app.post("/register",(req,res)=>{
             res.redirect("/login");
         })    
     })
-})
+});
+
 app.get("/logout",(req,res)=>{
     req.logout();
     res.redirect("/");
@@ -78,7 +112,7 @@ function isLoggedIn(req,res,next) {
         return next();
     }
     res.redirect("/login");
-}
+};
 
 //Listen On Server
 app.listen(process.env.PORT || 3000,function (err) {
